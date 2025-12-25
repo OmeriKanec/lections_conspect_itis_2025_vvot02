@@ -1,0 +1,32 @@
+openapi: "3.0.0"
+info:
+  version: 1.0.0
+  title: VVOT02 Api Gateway
+paths:
+  /:
+    get:
+      parameters:
+        - name: form
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: "Form" }
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: ${FORM_LOADER_FUNCTION_ID}
+        service_account_id: ${SA_ID}
+  /submit:
+    post:
+      parameters:
+        - name: form
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '302': { description: "Redirect" }
+        '400': {description: "Bad link or not a video"}
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: ${FORM_PROCESSOR_FUNCTION_ID}
+        service_account_id: ${SA_ID}
