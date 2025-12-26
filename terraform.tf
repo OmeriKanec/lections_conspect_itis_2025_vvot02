@@ -73,6 +73,13 @@ resource "yandex_resourcemanager_folder_iam_member" "lection_sa_functions_invoke
   depends_on = [yandex_iam_service_account.lection_sa]
 }
 
+resource "yandex_resourcemanager_folder_iam_member" "lection_sa_ydb_admin" {
+  folder_id = var.folder_id
+  role      = "ydb.admin"
+  member    = "serviceAccount:${yandex_iam_service_account.lection_sa.id}"
+  depends_on = [yandex_iam_service_account.lection_sa]
+}
+
 # Ключ доступа
 resource "yandex_iam_service_account_static_access_key" "sa_static_key" {
   service_account_id = yandex_iam_service_account.lection_sa.id
@@ -146,7 +153,6 @@ output "api_gateway_url" {
 }
 
 
-
 # Функция загрузки видео, отправки его в бакет и отправки ссылки пользавотелю
 resource "yandex_function" "form_loader" {
   name        = "vvot02-form-loader"
@@ -191,6 +197,9 @@ resource "yandex_function" "form_processor" {
     DOWNLOADER_QUEUE_URL = yandex_message_queue.downloader_queue.id
     AWS_ACCESS_KEY_ID     = yandex_iam_service_account_static_access_key.sa_static_key.access_key
     AWS_SECRET_ACCESS_KEY = yandex_iam_service_account_static_access_key.sa_static_key.secret_key
+    YDB_ENDPOINT  = "grpcs://ydb.serverless.yandexcloud.net:2135" # yandex_ydb_database_serverless.ydb.ydb_api_endpoint не работает
+    YDB_DATABASE  = yandex_ydb_database_serverless.ydb.database_path
+    YDB_TABLE_NAME = yandex_ydb_table.tasks_table.path
   }
 
   content {
@@ -205,6 +214,61 @@ data "archive_file" "form_processor_zip" {
   source_dir  = "${path.module}/form_processor"
   output_path = "${path.module}/form_processor.zip"
 }
+
+
+
+
+
+# База данных
+resource "yandex_ydb_database_serverless" "ydb" {
+  name                = "vvot02-ydb-serverless"
+  folder_id = var.folder_id
+  serverless_database {
+    storage_size_limit = 1
+  }
+}
+
+resource "yandex_ydb_table" "tasks_table" {
+  path = "tasks"
+
+  connection_string = yandex_ydb_database_serverless.ydb.ydb_full_endpoint
+  depends_on = [yandex_ydb_database_serverless.ydb]
+  primary_key = ["id"]
+
+  column {
+    name = "id"
+    type = "Utf8"
+    not_null = true
+  }
+  column {
+    name = "status"
+    type = "Utf8"
+    not_null = true
+  }
+  column {
+    name = "pdf_link"
+    type = "Utf8"
+    not_null = false
+  }
+  column {
+    name = "title"
+    type = "Utf8"
+    not_null = true
+  }
+  column {
+    name = "error_flag"
+    type = "Bool"
+    not_null = true
+  }
+  column {
+    name = "created_at"
+    type = "Timestamp"
+    not_null = true
+  }
+
+
+}
+
 
 
 
