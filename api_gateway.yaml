@@ -30,3 +30,31 @@ paths:
         type: cloud_functions
         function_id: ${FORM_PROCESSOR_FUNCTION_ID}
         service_account_id: ${SA_ID}
+  /tasks:
+    get:
+      parameters:
+        - name: tasks
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: "tasks" }
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: ${TASKS_LOADER_FUNCTION_ID}
+        service_account_id: ${SA_ID}
+  /pdf/{key}:
+    get:
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: "PDF file" }
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: ${BUCKET}
+        object: "{key}"
+        folder_id: ${FOLDER_ID}
+        service_account_id: ${SA_ID}

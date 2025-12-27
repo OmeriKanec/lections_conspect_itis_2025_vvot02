@@ -1,8 +1,12 @@
 import os
 import json
 import logging
+import subprocess
+import tarfile
+
 import boto3
 import requests
+import ydb
 from botocore.exceptions import ClientError
 
 logger = logging.getLogger()
@@ -10,12 +14,53 @@ logger.setLevel(logging.INFO)
 
 STORAGE_BUCKET = os.getenv("STORAGE_BUCKET")
 REGION_NAME = os.getenv("REGION_NAME")
+SPEECH_KIT_QUEUE_URL = os.getenv("SPEECH_KIT_QUEUE_URL")
 
 s3_client = boto3.client(
     service_name="s3",
     endpoint_url="https://storage.yandexcloud.net",
     region_name=REGION_NAME,
 )
+
+
+mq_client = boto3.client(
+    service_name="sqs",
+    endpoint_url="https://message-queue.api.cloud.yandex.net",
+    region_name=REGION_NAME,
+)
+def save_to_ydb(lecture_id, status, error_message):
+    driver = ydb.Driver(
+        endpoint=os.getenv('YDB_ENDPOINT'),
+        database=os.getenv('YDB_DATABASE'),
+        credentials=ydb.iam.MetadataUrlCredentials()
+    )
+
+    table_name = os.getenv('YDB_TABLE_NAME')
+
+    driver.wait(fail_fast=True)
+
+    pool = ydb.SessionPool(driver)
+
+    def execute_upsert(session):
+        session.transaction(ydb.SerializableReadWrite()).execute(
+            f"""
+            UPSERT INTO `{table_name}` (id, status, error_message)
+            VALUES ('{lecture_id}', '{status}', '{error_message}')
+            """,
+            commit_tx=True
+        )
+
+    pool.retry_operation_sync(execute_upsert)
+    driver.stop()
+    return True
+
+
+def save_to_ydb_with_err(lecture_id, error_message):
+    save_to_ydb(lecture_id, 'Ошибка', error_message)
+
+
+def save_to_ydb_with_success(lecture_id, status):
+    save_to_ydb(lecture_id, status, '')
 
 
 def get_file_path(public_key):
@@ -26,25 +71,49 @@ def get_file_path(public_key):
     logger.error("getFile failed: %s", resp.text)
     return None
 
-def download_video(file_href):
-    url = file_href
-    resp = requests.get(url, timeout=120)
-    if resp.ok:
-        logger.info("Downloaded %d bytes", len(resp.content))
-        return resp.content
-    logger.error("Download failed: %s", resp.status_code)
-    return None
 
+def extract_audio_streaming(file_href):
+    """FFmpeg читает видео ПОТОЧНО из URL"""
 
-def upload_video(video_data, id):
-    key = f"{id}.mp4"
+    # FFmpeg из /tmp/
+    ffmpeg_exe = "/tmp/ffmpeg"
+    if not os.path.exists(ffmpeg_exe):
+        with tarfile.open("./ffmpeg.tar.gz", "r:gz") as tar:
+            tar.extractall("/tmp/")
+
+    output_file = "/tmp/audio.mp3"
+    cmd = [
+        ffmpeg_exe, "-y",
+        "-i", file_href,  # ← URL напрямую!
+        "-vn",  # без видео
+        "-acodec", "libmp3lame",  # MP3
+        "-q:a", "2",  # качество
+        "-ar", "44100", "-ac", "2",
+        output_file
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+    if result.returncode != 0:
+        logger.error("FFmpeg: %s", result.stderr)
+        return "Extraction failed"
+
+    with open(output_file, "rb") as f:
+        audio_data = f.read()
+
+    os.unlink(output_file)
+    logger.info("Audio extracted: %d bytes", len(audio_data))
+    return audio_data
+
+def upload_audio(audio_data, lection_id):
+    key = f"{lection_id}.mp3"
 
     try:
         s3_client.put_object(
             Bucket=STORAGE_BUCKET,
             Key=key,
-            Body=video_data,
-            ContentType="video/mp4",
+            Body=audio_data,
+            ContentType="audio/mpeg",
             Metadata={"source": "yandex disk"}
         )
         logger.info("Saved to: %s/%s", STORAGE_BUCKET, key)
@@ -53,19 +122,6 @@ def upload_video(video_data, id):
         logger.error("Upload failed: %s", e)
         return None
 
-
-# def send_public_link(chat_id, key):
-#     public_url = f"https://{API_GATEWAY_DOMAIN}/video/{key}"
-#     message = f"«Видео доступно по URL: {public_url}»"
-#
-#     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-#     requests.post(url, json={
-#         "chat_id": chat_id,
-#         "text": message,
-#         "disable_web_page_preview": True
-#     }, timeout=10)
-#     logger.info("Sent URL: %s", public_url)
-#     return public_url
 
 
 def handler(event, context):
@@ -78,15 +134,27 @@ def handler(event, context):
         task = json.loads(details.get("message", {}).get("body", "{}"))
 
         public_key = task.get("public_key")
-        lection_id = task.get("lection_id")
         lecture_name = task.get("lecture_name")
+        lection_id = task.get("lection_id")
 
         file_href = get_file_path(public_key)
 
-        video_data = download_video(file_href)
 
-        key = upload_video(video_data, lection_id)
+        audio_data = extract_audio_streaming(file_href)
+        if audio_data == "Extraction failed":
+            save_to_ydb_with_err(lection_id, audio_data)
 
-        # send_public_link(chat_id, key)
+        key = upload_audio(audio_data, lection_id)
+
+        task = {
+            "lection_id": lection_id,
+            "key": key,
+            "lecture_name": lecture_name
+        }
+        mq_client.send_message(
+            QueueUrl=SPEECH_KIT_QUEUE_URL,
+            MessageBody=json.dumps(task)
+        )
+        save_to_ydb_with_success(lection_id, "В обработке")
 
     return {"statusCode": 200, "body": "done"}

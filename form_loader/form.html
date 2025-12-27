@@ -173,12 +173,6 @@
 
     <script>
         document.getElementById('lecture_name').focus();
-
-        document.getElementById('video_url').addEventListener('input', function(e) {
-            const value = e.target.value;
-            const pattern = /https:\/\/disk\.yandex\.(ru|com)\/i\/[a-zA-Z0-9_-]+/;
-            e.target.style.borderColor = value && !pattern.test(value) ? '#e74c3c' : '#e1e8ed';
-        });
     </script>
 </body>
 </html>

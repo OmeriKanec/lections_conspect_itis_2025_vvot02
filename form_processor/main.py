@@ -19,7 +19,7 @@ mq_client = boto3.client(
 )
 
 
-def save_to_ydb(lecture_id, status, title, error_flag):
+def save_to_ydb(lecture_id, status, title, error_message, public_url):
     driver = ydb.Driver(
         endpoint=os.getenv('YDB_ENDPOINT'),
         database=os.getenv('YDB_DATABASE'),
@@ -43,8 +43,8 @@ def save_to_ydb(lecture_id, status, title, error_flag):
         # }
         session.transaction(ydb.SerializableReadWrite()).execute(
             f"""
-            UPSERT INTO `{table_name}` (id, status, title, error_flag, created_at)
-            VALUES ('{lecture_id}', '{status}', '{title}', {error_flag}, CurrentUtcTimestamp())
+            UPSERT INTO `{table_name}` (id, status, title, error_message, public_url, created_at, pdf_link)
+            VALUES ('{lecture_id}', '{status}', '{title}', '{error_message}', '{public_url}', CurrentUtcTimestamp(), '')
             """,
             commit_tx=True
         )
@@ -52,6 +52,14 @@ def save_to_ydb(lecture_id, status, title, error_flag):
     pool.retry_operation_sync(execute_upsert)
     driver.stop()
     return True
+
+
+def save_to_ydb_with_err(lecture_id, title, error_message, public_url):
+    save_to_ydb(lecture_id, 'Ошибка', title, error_message, public_url)
+
+
+def save_to_ydb_with_success(lecture_id, status, title, public_url):
+    save_to_ydb(lecture_id, status, title, '', public_url)
 
 
 def handler(event: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
@@ -83,25 +91,25 @@ def handler(event: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"Gotten response: {resp}")
     if resp.ok:
         if resp.json()["mime_type"] != "video/mp4":
-            save_to_ydb(lection_id, 'Only video accepted', lecture_name, True)
+            save_to_ydb_with_err(lection_id, lecture_name, 'Only video accepted', form_data.get('video_url', ''))
         else:
             task = {
                 "public_key": processed_data.get('video_url'),
                 "lection_id": lection_id,
-                "lecture_name": lecture_name,
+                "lecture_name": lecture_name
             }
 
             mq_client.send_message(
                 QueueUrl=DOWNLOADER_QUEUE_URL,
                 MessageBody=json.dumps(task)
             )
-            save_to_ydb(lection_id, 'Processing...', lecture_name, False)
+            save_to_ydb_with_success(lection_id, 'В очереди', lecture_name, form_data.get('video_url', ''))
     else:
-        save_to_ydb(lection_id, 'Not correct link', lecture_name, True)
+        save_to_ydb_with_err(lection_id,  lecture_name, 'Not correct link', form_data.get('video_url', ''))
     return {
         'statusCode': 302,
         'headers': {
-            'Location': '/',
+            'Location': '/tasks',
             'Access-Control-Allow-Origin': '*'
         },
         'body': ''

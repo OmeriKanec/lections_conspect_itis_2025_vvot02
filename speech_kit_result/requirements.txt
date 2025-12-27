@@ -1,0 +1,4 @@
+requests
+ydb
+boto3
+fpdf
