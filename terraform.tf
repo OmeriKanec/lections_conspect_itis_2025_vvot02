@@ -42,7 +42,7 @@ provider "yandex" {
 # Создание сервисного аккаунта и назначение ему ролей
 # Сервисный аккаунт
 resource "yandex_iam_service_account" "lection_sa" {
-  name        = "${var.prefix}-tg-video-bot-sa"
+  name        = "${var.prefix}-lection-sa"
   description = "Service account for Telegram video bot (Cloud Functions, MQ, Object Storage)"
 }
 
@@ -155,7 +155,6 @@ resource "yandex_api_gateway" "vvot02_api_gw" {
   description       = "Telegram video bot webhook API Gateway"
   execution_timeout = "30"
   spec              = templatefile("${path.module}/api_gateway.yaml", {
-    #    QUEUE_RECEIVER_URL = yandex_message_queue.receiver.id
     FOLDER_ID          = var.folder_id
     SA_ID                      = yandex_iam_service_account.lection_sa.id
     FORM_LOADER_FUNCTION_ID    = yandex_function.form_loader.id
@@ -244,7 +243,7 @@ resource "yandex_ydb_database_serverless" "ydb" {
 
 resource "time_sleep" "db_replication" {
   depends_on      = [yandex_ydb_database_serverless.ydb, yandex_iam_service_account.lection_sa]
-  create_duration = "12s"
+  create_duration = "20s"
 }
 
 resource "yandex_ydb_table" "tasks_table" {
