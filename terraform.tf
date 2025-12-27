@@ -250,7 +250,7 @@ resource "yandex_ydb_table" "tasks_table" {
   path = "tasks"
 
   connection_string = yandex_ydb_database_serverless.ydb.ydb_full_endpoint
-  depends_on        = [time_sleep.db_replication]
+  depends_on        = [time_sleep.db_replication, yandex_ydb_database_serverless.ydb]
   primary_key       = ["id"]
 
   column {
