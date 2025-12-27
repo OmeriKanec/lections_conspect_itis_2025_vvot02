@@ -33,10 +33,10 @@ def save_to_ydb(lecture_id, status, error_message, pdf_link):
 
     def execute_upsert(session):
         session.transaction(ydb.SerializableReadWrite()).execute(
-            f"""
+            f'''
             UPSERT INTO `{table_name}` (id, status, error_message, pdf_link)
             VALUES ('{lecture_id}', '{status}', '{error_message}', '{pdf_link}')
-            """,
+            ''',
             commit_tx=True
         )
 
@@ -53,23 +53,22 @@ def save_to_ydb_with_success(lecture_id, status, pdf_link):
     save_to_ydb(lecture_id, status, '', pdf_link)
 
 
-FONT_PATH = os.getenv("ofont.ru_Gothra.ttf")
-
-
 def make_pdf(text, buffer, lecture_name):
     pdf = FPDF()
     pdf.add_page()
-
-    pdf.add_font("gothra", style="", fname=FONT_PATH)
-    pdf.set_font("gothra", size=14)
+    font_path = "DejaVuSans.ttf"
+    pdf.add_font("DejaVu", fname=font_path, uni=True)
+    pdf.set_font("DejaVu", size=14)
 
     pdf.multi_cell(0, 8, f'Название лекции: {lecture_name}')
     pdf.ln(2)
 
-    pdf.set_font("gothra", size=11)
+    pdf.set_font("DejaVu", size=11)
     pdf.multi_cell(0, 6, text)
 
-    pdf.output(buffer)
+    pdf_bytes = pdf.output(dest='S')
+    buffer.write(pdf_bytes)
+    buffer.seek(0)
 
 
 def get_text(operation_id, api_key):
@@ -153,7 +152,6 @@ def handler(event, context):
         messages = event.get("messages", [])
         if not messages:
             return {"statusCode": 200}
-
         for msg in messages:
             details = msg.get("details", {})
             task = json.loads(details.get("message", {}).get("body", "{}"))
@@ -166,7 +164,6 @@ def handler(event, context):
             folder_id = os.getenv("FOLDER_ID")
             text = get_text(operation_id, api_key)
             summary = make_lecture_summary(text, api_key, folder_id)
-            logger.info("lection_id: %s", lection_id)
             pdf_key = f"{lection_id}-summary.pdf"
             pdf_buffer = BytesIO()
             pdf_buffer.seek(0)
@@ -191,22 +188,3 @@ def handler(event, context):
     except Exception as e:
         logger.error("Error: %s", str(e))
         return {"statusCode": 500, "body": str(e)}
-
-# # Тестовая функция
-# def test_check_status():
-#     """Для локального тестирования"""
-#     api_key = "AQVN0P-KutE3VCkBTxeby9Df3ABC1AAQv-TOtrdV"
-#     if not api_key:
-#         print("Set SPEECHKIT_API_KEY env var")
-#         return
-#
-#     # Пример вызова
-#     result = get_text(
-#         operation_id="f8dogit5lu4cish8dpnt",
-#         api_key=api_key
-#     )
-#     print(json.dumps(result, indent=2, ensure_ascii=False))
-#
-#
-# if __name__ == "__main__":
-#     test_check_status()

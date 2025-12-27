@@ -1,0 +1,4 @@
+cloud_id            = "your_cloud_id"
+folder_id           = "your_folder_id"
+prefix = "vvot02"
+region              = "ru-central1" // "ru-central1-d" does not work(boto3)
